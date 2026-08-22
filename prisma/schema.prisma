@@ -8,4 +8,14 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// Modelos ainda não definidos — aguardando SDD funcional do caf (seção 6, item 5)
+// Config da instituição (seção 3 do SDD): nome, tipo, endereço, RT — dado, não hardcode
+model Institution {
+  id        String   @id @default(uuid())
+  name      String
+  type      String   // ex: UBS, HM, UPA
+  address   String?
+  rtName    String?  // nome do Responsável Técnico
+  rtNumber  String?  // registro do RT (CRF/CRM/etc)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
