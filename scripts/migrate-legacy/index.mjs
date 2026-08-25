@@ -1,17 +1,27 @@
 #!/usr/bin/env node
 import 'dotenv/config';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { sanearCatalogo } from './saneamento.mjs';
 import { computeReconciliation, writeReconciliationReport } from './reconcile-report.mjs';
+import { emitMigrationSql } from './sql-emit.mjs';
+
+const OUT_DIR = new URL('./out/', import.meta.url).pathname;
 
 function parseArgs(argv) {
-  const args = { dryRun: true, scope: 'all' };
+  const args = { dryRun: true, scope: 'all', via: 'prisma' };
   for (const arg of argv) {
     if (arg === '--commit') args.dryRun = false;
     else if (arg === '--dry-run') args.dryRun = true;
     else if (arg.startsWith('--scope=')) args.scope = arg.slice('--scope='.length);
     else if (arg.startsWith('--target=')) args.target = arg.slice('--target='.length);
     else if (arg.startsWith('--input=')) args.input = arg.slice('--input='.length);
+    // --via=sql-emit: em vez de conectar via PrismaClient (precisa de TCP
+    // direto ao Postgres, indisponível em sandboxes só-HTTPS), grava os
+    // statements SQL equivalentes em out/commit-statements.json para serem
+    // aplicados manualmente via mcp__Neon__run_sql_transaction. Ver plano,
+    // adendo "commit via Neon MCP".
+    else if (arg.startsWith('--via=')) args.via = arg.slice('--via='.length);
   }
   return args;
 }
@@ -54,7 +64,19 @@ async function main() {
 
   let destinoReal;
 
-  if (!args.dryRun) {
+  if (!args.dryRun && args.via === 'sql-emit') {
+    const importBatchId = `import-${new Date().toISOString()}`;
+    const { statements, ids, semCorrespondencia } = emitMigrationSql({ auto, estoques, saldos, importBatchId });
+    await mkdir(OUT_DIR, { recursive: true });
+    const outPath = path.join(OUT_DIR, 'commit-statements.json');
+    await writeFile(outPath, JSON.stringify({ importBatchId, statements, semCorrespondencia }, null, 2));
+    console.log(`  ${statements.length} statements SQL gerados em ${outPath}`);
+    console.log('  Nenhuma escrita foi feita — aplique via mcp__Neon__run_sql_transaction (ver plano).');
+    console.log(`  ids determinísticos: institution=${ids.institutionId}`);
+    // destinoReal fica indefinido aqui de propósito: sem PrismaClient/TCP
+    // não há como consultar o banco a partir deste script neste modo; a
+    // reconciliação pós-commit é feita separadamente via Neon MCP (run_sql).
+  } else if (!args.dryRun) {
     if (!args.target && !process.env.DATABASE_URL) {
       throw new Error('--commit exige --target=<connection string> (ou DATABASE_URL no ambiente) apontando para uma branch de DEV do Neon — nunca main.');
     }
