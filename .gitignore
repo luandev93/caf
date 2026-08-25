@@ -3,3 +3,5 @@ dist
 .env
 *.log
 coverage
+scripts/legacy-audit/out
+scripts/migrate-legacy/out
