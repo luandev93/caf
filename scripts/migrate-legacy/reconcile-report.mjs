@@ -21,6 +21,9 @@ function contarPorMotivo(entradas) {
  * @param {number} params.totalItensOrigem
  * @param {{auto: any[], review: {item:any, motivos:string[]}[], excluido: {item:any, motivos:string[]}[]}} params.classificacao
  * @param {{itemId: string, estoqueId: string, qtd: number}[]} params.saldosOrigem
+ *   Espera-se `qtd` já numérica e válida — filtrar entradas corrompidas
+ *   (ver quantidadeValida em ../shared/quantidade.mjs) é responsabilidade
+ *   de quem chama, não deste relatório.
  */
 export function buildReconciliationReport({ totalItensOrigem, classificacao, saldosOrigem }) {
   const idsAuto = new Set(classificacao.auto.map((i) => i.id));

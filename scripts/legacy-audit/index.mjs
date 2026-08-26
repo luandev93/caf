@@ -14,6 +14,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getLegacyFirestore, getLegacyAuth, paginate } from './firebase-admin-client.mjs';
+import { quantidadeValida } from '../shared/quantidade.mjs';
 
 const OUT_DIR = process.argv.find((a) => a.startsWith('--out='))?.slice('--out='.length)
   ?? 'scripts/legacy-audit/out';
@@ -28,10 +29,11 @@ const COLLECTIONS = ['itens', 'saldos', 'lotes', 'pessoas', 'usuarios', 'movimen
 function redact(docData, collectionName) {
   const { id, ...rest } = docData;
   if (collectionName === 'pessoas' || collectionName === 'usuarios') {
+    // O uid do Firebase Auth é o próprio id do documento (ver seção
+    // "pessoas com login" mais abaixo) — não existe um campo de uid separado.
     return {
       id,
       hasLogin: Boolean(rest?.acesso?.temLogin),
-      hasUid: Boolean(rest?.acesso?.uid ?? rest?.uid),
       role: rest?.papel ?? rest?.role ?? null,
       ativo: rest?.ativo ?? null,
     };
@@ -101,9 +103,14 @@ async function main() {
   const pendenteSemSaldo = [];
   const pendenteComSaldo = [];
   const inativoComSaldo = [];
+  const saldosComQuantidadeInvalida = [];
   const saldosPorItem = new Map();
   for (const saldo of raw.saldos.values()) {
-    const qtd = Number(saldo.qtd ?? saldo.quantidade ?? 0);
+    const qtd = quantidadeValida(saldo.qtd ?? saldo.quantidade);
+    if (qtd === null) {
+      saldosComQuantidadeInvalida.push({ id: saldo.id, valorBruto: saldo.qtd });
+      continue;
+    }
     saldosPorItem.set(saldo.itemId, (saldosPorItem.get(saldo.itemId) ?? 0) + qtd);
   }
   for (const item of itens) {
@@ -123,10 +130,21 @@ async function main() {
     .filter((l) => !itemIds.has(l.itemId) || !estoqueIds.has(l.estoqueId))
     .map((l) => l.id);
 
+  // Alguns docs de `lotes` têm `qtd` guardado como o sentinel não resolvido de
+  // FieldValue.increment() (ex: `{ $u: 12, _methodName: 'increment' }`) em vez
+  // de um número — sinal de um bug real no app legado (um update que serializa
+  // o sentinel errado em vez de deixar o SDK resolvê-lo). Não dá pra somar
+  // esses como zero silenciosamente (mascararia a divergência) nem como NaN
+  // (quebra a comparação) — cada ocorrência vira uma flag própria.
+  const lotesComQuantidadeInvalida = [];
   const somaLotesPorChave = new Map(); // chave = `${estoqueId}__${itemId}`
   for (const lote of raw.lotes.values()) {
     const chave = `${lote.estoqueId}__${lote.itemId}`;
-    const qtd = Number(lote.qtd ?? lote.quantidade ?? 0);
+    const qtd = quantidadeValida(lote.qtd ?? lote.quantidade);
+    if (qtd === null) {
+      lotesComQuantidadeInvalida.push({ id: lote.id, chave, valorBruto: lote.qtd });
+      continue; // não soma um valor que não é número de verdade
+    }
     somaLotesPorChave.set(chave, (somaLotesPorChave.get(chave) ?? 0) + qtd);
   }
   const divergenciaLotesSaldos = [];
@@ -140,20 +158,19 @@ async function main() {
     }
   }
 
-  // --- pessoas com temLogin=true sem uid no Firebase Auth -------------------
+  // --- pessoas com temLogin=true sem uid válido no Firebase Auth ------------
+  // Convenção do legado: o id do doc em `pessoas` É o uid do Firebase Auth
+  // (não existe um campo `acesso.uid` separado) — confirmado batendo
+  // `pessoas/{id}` contra `movimentos.usuarioUid` de quem editou aquele
+  // cadastro.
   const pessoasComLogin = [...raw.pessoas.values()].filter((p) => p?.acesso?.temLogin);
   const auth = getLegacyAuth();
   const semUidCorrespondente = [];
   for (const pessoa of pessoasComLogin) {
-    const uid = pessoa?.acesso?.uid;
-    if (!uid) {
-      semUidCorrespondente.push({ id: pessoa.id, motivo: 'sem-uid-no-documento' });
-      continue;
-    }
     try {
-      await auth.getUser(uid);
+      await auth.getUser(pessoa.id);
     } catch {
-      semUidCorrespondente.push({ id: pessoa.id, uid, motivo: 'uid-nao-encontrado-no-auth' });
+      semUidCorrespondente.push({ id: pessoa.id, motivo: 'uid-nao-encontrado-no-auth' });
     }
   }
 
@@ -169,6 +186,8 @@ async function main() {
     itensInativoComSaldo: { total: inativoComSaldo.length, ids: inativoComSaldo },
     saldosOrfaos: { total: saldosOrfaos.length, ids: saldosOrfaos },
     lotesOrfaos: { total: lotesOrfaos.length, ids: lotesOrfaos },
+    saldosComQuantidadeInvalida: { total: saldosComQuantidadeInvalida.length, detalhe: saldosComQuantidadeInvalida },
+    lotesComQuantidadeInvalida: { total: lotesComQuantidadeInvalida.length, detalhe: lotesComQuantidadeInvalida },
     divergenciaLotesSaldos: { total: divergenciaLotesSaldos.length, detalhe: divergenciaLotesSaldos },
     pessoasComLoginSemUidValido: { total: semUidCorrespondente.length, detalhe: semUidCorrespondente },
   };

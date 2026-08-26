@@ -17,6 +17,7 @@ import path from 'node:path';
 import { normalizeLegacyItem, classifyLegacyItems } from './saneamento.mjs';
 import { buildReconciliationReport, formatReconciliationReport } from './reconcile-report.mjs';
 import { emitCommitStatements } from './sql-emit.mjs';
+import { quantidadeValida } from '../shared/quantidade.mjs';
 
 function parseArgs(argv) {
   const args = { dryRun: true, scope: 'all', source: 'fixture', target: 'sql' };
@@ -62,11 +63,26 @@ async function main() {
   const { itens, saldos, estoques } = args.source === 'firebase' ? await loadFromFirebase() : await loadFromFixture();
 
   const normalizados = itens.map(normalizeLegacyItem);
+
+  // Alguns docs de `saldos` (e `lotes`, ver legacy-audit) guardam `qtd` como
+  // o sentinel não resolvido de FieldValue.increment() — bug real de escrita
+  // no `farm`, não dado válido. Nunca entra na soma como NaN nem como zero
+  // silencioso: fica de fora do baseline e some no relatório de qualidade,
+  // igual às demais chaves não migradas.
+  const saldosValidos = [];
+  const saldosInvalidos = [];
+  for (const s of saldos) {
+    const qtd = quantidadeValida(s.qtd);
+    if (qtd === null) saldosInvalidos.push(s);
+    else saldosValidos.push({ ...s, qtd });
+  }
+
   const saldoTotalPorItemId = new Map();
-  for (const s of saldos) saldoTotalPorItemId.set(s.itemId, (saldoTotalPorItemId.get(s.itemId) ?? 0) + Number(s.qtd ?? 0));
+  for (const s of saldosValidos) saldoTotalPorItemId.set(s.itemId, (saldoTotalPorItemId.get(s.itemId) ?? 0) + s.qtd);
 
   const classificacao = classifyLegacyItems(normalizados, saldoTotalPorItemId);
-  const report = buildReconciliationReport({ totalItensOrigem: itens.length, classificacao, saldosOrigem: saldos });
+  const report = buildReconciliationReport({ totalItensOrigem: itens.length, classificacao, saldosOrigem: saldosValidos });
+  report.saldo.invalidos = { total: saldosInvalidos.length, ids: saldosInvalidos.map((s) => s.id) };
 
   process.stdout.write(formatReconciliationReport(report) + '\n\n');
 
@@ -93,7 +109,7 @@ async function main() {
   const importBatchId = `import-${new Date().toISOString()}`;
 
   if (args.target === 'sql') {
-    const statements = emitCommitStatements({ institutionId, estoques, classificacao, saldosOrigem: saldos, importBatchId });
+    const statements = emitCommitStatements({ institutionId, estoques, classificacao, saldosOrigem: saldosValidos, importBatchId });
     const outPath = path.join(outDir, 'commit-statements.json');
     await writeFile(outPath, JSON.stringify(statements, null, 2), 'utf8');
     process.stdout.write(
@@ -108,7 +124,7 @@ async function main() {
     const { commitToDatabase } = await import('./write-prisma.mjs');
     const prisma = new PrismaClient();
     try {
-      await commitToDatabase(prisma, { institutionId, estoques, classificacao, saldosOrigem: saldos, importBatchId });
+      await commitToDatabase(prisma, { institutionId, estoques, classificacao, saldosOrigem: saldosValidos, importBatchId });
       process.stdout.write('Commit via Prisma concluído.\n');
     } finally {
       await prisma.$disconnect();
