@@ -4,7 +4,7 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sanearCatalogo } from './saneamento.mjs';
 import { computeReconciliation, writeReconciliationReport } from './reconcile-report.mjs';
-import { emitMigrationSql } from './sql-emit.mjs';
+import { emitMigrationSql, emitBulkMigrationSql } from './sql-emit.mjs';
 
 const OUT_DIR = new URL('./out/', import.meta.url).pathname;
 
@@ -64,9 +64,10 @@ async function main() {
 
   let destinoReal;
 
-  if (!args.dryRun && args.via === 'sql-emit') {
+  if (!args.dryRun && (args.via === 'sql-emit' || args.via === 'sql-emit-bulk')) {
     const importBatchId = `import-${new Date().toISOString()}`;
-    const { statements, ids, semCorrespondencia } = emitMigrationSql({ auto, estoques, saldos, importBatchId });
+    const emit = args.via === 'sql-emit-bulk' ? emitBulkMigrationSql : emitMigrationSql;
+    const { statements, ids, semCorrespondencia } = emit({ auto, estoques, saldos, importBatchId });
     await mkdir(OUT_DIR, { recursive: true });
     const outPath = path.join(OUT_DIR, 'commit-statements.json');
     await writeFile(outPath, JSON.stringify({ importBatchId, statements, semCorrespondencia }, null, 2));
