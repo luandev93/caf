@@ -1,0 +1,21 @@
+{
+  "_comentario": "Fixture ilustrativa, não é um recorte de dados reais do Firestore. Cobre um caso de cada regra de saneamento.mjs para testar sem precisar de credencial do Firebase.",
+  "itens": [
+    { "id": "i1", "codigo": "MED0001", "descricao": "OMEPRAZOL 40MG INJ.", "ativo": true, "pendente": false, "unidade": "AMPOLA" },
+    { "id": "i2", "codigo": "MED0002", "descricao": "DIPIRONA 500MG CP", "ativo": true, "pendente": false, "unidade": "COMPRIMIDO" },
+    { "id": "i3", "codigo": null, "descricao": "MATERIAL SEM CODIGO DE ORIGEM", "ativo": true, "pendente": false, "unidade": "UNIDADE" },
+    { "id": "i4", "codigo": "MED0002", "descricao": "DIPIRONA 500 MG COMPRIMIDO", "ativo": true, "pendente": false, "unidade": "COMPRIMIDO" },
+    { "id": "i5", "codigo": "MED0009", "descricao": "SORO FISIOLOGICO 0,9% 500ML", "ativo": true, "pendente": true, "unidade": "FRASCO" },
+    { "id": "i6", "codigo": "MED0010", "descricao": "ALGODAO HIDROFILO", "ativo": true, "pendente": true, "unidade": "PACOTE" },
+    { "id": "i7", "codigo": "MED0011", "descricao": "LUVA DE PROCEDIMENTO", "ativo": false, "pendente": false, "unidade": "CAIXA" },
+    { "id": "i8", "codigo": "MED0012", "descricao": "GAZE ESTERIL", "ativo": false, "pendente": false, "unidade": "PACOTE" },
+    { "id": "i9", "codigo": "MED0020", "descricao": "PARACETAMOL   500MG  CP", "ativo": true, "pendente": false, "unidade": "COMPRIMIDO" },
+    { "id": "i10", "codigo": "MED0021", "descricao": "Paracetamol 500mg cp", "ativo": true, "pendente": false, "unidade": "COMPRIMIDO" }
+  ],
+  "saldos": [
+    { "itemId": "i1", "estoqueId": "e1", "qtd": 10 },
+    { "itemId": "i2", "estoqueId": "e1", "qtd": 0 },
+    { "itemId": "i5", "estoqueId": "e1", "qtd": 3 },
+    { "itemId": "i7", "estoqueId": "e1", "qtd": 7 }
+  ]
+}

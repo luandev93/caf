@@ -12,10 +12,148 @@ datasource db {
 model Institution {
   id        String   @id @default(uuid())
   name      String
-  type      String   // ex: UBS, HM, UPA
+  type      String // ex: UBS, HM, UPA
   address   String?
-  rtName    String?  // nome do Responsável Técnico
-  rtNumber  String?  // registro do RT (CRF/CRM/etc)
+  rtName    String? // nome do Responsável Técnico
+  rtNumber  String? // registro do RT (CRF/CRM/etc)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  stockLocations StockLocation[]
+  users          User[]
+}
+
+// ---------------------------------------------------------------------------
+// Fase 1 — fundação de recuperação do legado (Firebase/Firestore do `farm`).
+// Escopo deliberadamente mínimo: catálogo saneado + saldo atual + logins.
+// Fornecedores, NF-e, dispensação e histórico de movimentos são aditivos
+// depois — os FKs abaixo (Product/StockLocation/User) já foram desenhados
+// para não fechar essa porta.
+// ---------------------------------------------------------------------------
+
+// Substitui a coleção `estoques` do Firestore. Cada unidade física de estoque
+// (farmácia central, satélite, carro de emergência etc.) vive sob uma
+// Institution — cada UBS cliente ou unidade interna do HM é uma Institution.
+model StockLocation {
+  id            String      @id @default(uuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  name          String
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  batches        Batch[]
+  stockBalances  StockBalance[]
+  legacyMappings LegacyMapping[]
+}
+
+// Substitui a coleção `itens`, já pós-saneamento (ver scripts/migrate-legacy).
+// `code` é único e opcional: no legado nem todo item tinha um código de
+// negócio estável, e a unicidade nunca foi garantida pelo Firestore — itens
+// sem código, ou com código duplicado/divergente, ficam de fora do baseline
+// automático e vão para a fila de revisão humana (LegacyMapping registra a
+// decisão).
+model Product {
+  id                   String   @id @default(uuid())
+  code                 String?  @unique
+  description          String
+  activeIngredient     String?
+  concentration        String?
+  pharmaceuticalForm   String?
+  unit                 String
+  type                 String? // MEDICAMENTO | MATERIAL | ...
+  atcGroup             String?
+  atcGroupName         String?
+  pharmacologicalGroup String?
+  controlled           String? // classe de controle especial (ex: B1), quando houver
+  thermolabile         Boolean  @default(false)
+  highAlert            Boolean  @default(false)
+  minStock             Int      @default(0)
+  controlsBatch        Boolean  @default(true)
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  batches        Batch[]
+  stockBalances  StockBalance[]
+  legacyMappings LegacyMapping[]
+}
+
+// Substitui a coleção `lotes`. Separado de StockBalance porque nem todo item
+// legado controla lote (`Product.controlsBatch`) — StockBalance continua
+// sendo a fonte da verdade do saldo atual mesmo quando não há lote.
+model Batch {
+  id              String        @id @default(uuid())
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  stockLocationId String
+  stockLocation   StockLocation @relation(fields: [stockLocationId], references: [id])
+  batchNumber     String?
+  expiresAt       DateTime?
+  quantity        Decimal
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([productId, stockLocationId, batchNumber, expiresAt])
+}
+
+// Substitui a coleção `saldos` (id legado = `${estoqueId}__${itemId}`).
+// Fonte da verdade do saldo atual por produto/local — a reconciliação da
+// migração (scripts/migrate-legacy/reconcile-report.mjs) compara isso contra
+// a soma de `lotes.qtd` do Firestore e exige diferença zero no bucket "auto".
+model StockBalance {
+  id              String        @id @default(uuid())
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  stockLocationId String
+  stockLocation   StockLocation @relation(fields: [stockLocationId], references: [id])
+  quantity        Decimal
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([productId, stockLocationId])
+}
+
+// Recuperação de login (coleção `pessoas`/`usuarios` do Firestore, campo
+// `acesso.temLogin`). Guarda só metadado de papel/contato nesta fase — não é
+// uma tentativa de reprovisionar credenciais reais (hash de senha do
+// Firebase Auth não é exportável por nenhum provedor). Vincular a um
+// provedor de auth novo é trabalho futuro.
+model User {
+  id            String       @id @default(uuid())
+  name          String
+  email         String?
+  phone         String?
+  active        Boolean      @default(true)
+  hasLogin      Boolean      @default(false) // reflete `pessoas.acesso.temLogin` no legado
+  role          String? // adm | farmaceutico | auxiliar | enfermagem (ver firestore.rules do farm)
+  isRt          Boolean      @default(false)
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  legacyMappings LegacyMapping[]
+}
+
+// Rastreabilidade genérica e idempotente de toda decisão de migração —
+// reutilizável por qualquer entidade futura (Supplier, Invoice, ...) em vez
+// de espalhar campos `legacyId` pelas tabelas de destino. A constraint
+// composta abaixo é o que permite reexecutar a migração sem duplicar linhas
+// (upsert por `legacyCollection` + `legacyDocId`).
+model LegacyMapping {
+  id               String         @id @default(uuid())
+  entityType       String // PRODUCT | STOCK_LOCATION | USER | ...
+  legacyCollection String // nome da coleção no Firestore (ex: "itens")
+  legacyDocId      String // id do documento no Firestore
+  legacyCode       String? // itens.codigo no momento da importação, p/ auditoria
+  productId        String?
+  product          Product?       @relation(fields: [productId], references: [id])
+  stockLocationId  String?
+  stockLocation    StockLocation? @relation(fields: [stockLocationId], references: [id])
+  userId           String?
+  user             User?          @relation(fields: [userId], references: [id])
+  importBatchId    String // agrupa linhas da mesma execução de importação
+  importedAt       DateTime       @default(now())
+
+  @@unique([legacyCollection, legacyDocId])
 }
