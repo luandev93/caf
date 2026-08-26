@@ -42,25 +42,23 @@ nada de escrita, nada de corte.
 
 ```
 main                — só Institution (schema base, antes desta fase)
-dev/legacy-import   — schema completo + catálogo migrado:
-  Institution     1
-  StockLocation   6
-  Product       547  (443 ativos / 104 inativos, 0 sem código)
-  Batch           0  (legado não usa lote de forma consistente ainda)
-  StockBalance  345
-  User            0  (login ainda não recuperado)
-  LegacyMapping 554  (548 itens + 6 estoques rastreados)
+dev/legacy-import   — só schema, sem dado nenhum (ver nota abaixo)
 ```
 
-178 produtos ativos não têm registro de saldo (aceito como zero por ora,
-sem reconciliar contra o Firestore ao vivo nesta rodada).
+**Nota (2026-08-26):** essa branch chegou a ter um catálogo inteiro
+migrado do Firestore de produção do HMMV (`farmhmmv`) — 547 produtos, 345
+saldos, 6 locais de estoque. Foi revertido de propósito: esse Firestore
+já é a origem de dados do módulo `pharm` (que já tem essa mesma migração
+feita, validada e documentada lá). `caf` é um produto à parte, pensado
+pra atender **outras** instituições/UBS como cliente — não deve nascer
+com o dado real de um cliente específico (o HMMV) como se fosse a
+instituição dele. O schema, os scripts de auditoria/migração e os testes
+continuam valendo como base reutilizável; só o dado de exemplo foi
+retirado. O `Institution` placeholder que existia foi renomeado de
+`"HMMV..."` pra um nome neutro, até existir uma instituição real de
+verdade contratando o produto.
 
-Essa branch (`dev/legacy-import`) já reflete uma migração real, executada
-via `mcp__Neon__run_sql_transaction` numa sessão anterior — a aplicação do
-schema e a carga de dados aconteceram direto contra o Neon (ver seção
-"Por que dois caminhos de commit" abaixo). Este commit sincroniza o
-repositório (schema, scripts, testes) com essa realidade, que antes só
-existia no banco. **`main` não foi tocada.**
+**`main` não foi tocada.**
 
 ## Rodando localmente
 
